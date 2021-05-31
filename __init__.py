@@ -17,8 +17,7 @@ import urllib
 from urllib.request import Request
 import re
 
-# from adapt.intent import IntentBuilder
-from mycroft.skills.core import intent_file_handler  # , MycroftSkill
+from mycroft.skills.core import intent_file_handler
 from mycroft.audio import wait_while_speaking
 from mycroft.skills.common_play_skill import CommonPlaySkill, CPSMatchLevel
 from mycroft.audio.services.vlc import VlcService
@@ -121,7 +120,7 @@ class PodcastSkill(CommonPlaySkill):
                 self.mediaplayer.stop()
                 self.mediaplayer.clear_list()
             self.mediaplayer.add_list(tracklist)
-            # self.speak(self._get_play_message(data))
+            self.speak(parsed_feed["episodes"][0]["title"])
             self.mediaplayer.play()
             self.state = 'playing'
 
@@ -136,87 +135,6 @@ class PodcastSkill(CommonPlaySkill):
         else:
             listen_url = ""
         return listen_url
-
-    @intent_file_handler('PlayPodcast.intent')
-    def handle_play_podcast_intent(self, message):
-        utter = message.data['utterance']
-        self.enclosure.mouth_think()
-
-        podcast_names = [self.settings["nameone"], self.settings["nametwo"], self.settings["namethree"]]
-        podcast_urls = [self.settings["feedone"], self.settings["feedtwo"], self.settings["feedthree"]]
-
-        for try_count in range(0, 2):
-            listen_url = self.chosen_podcast(utter, podcast_names, podcast_urls)
-            if listen_url:
-                break
-            utter = self.get_response('nomatch')
-        else:
-            self.speak_dialog('not.found')
-            return False
-
-        # normalise feed and parse it
-        normalised_feed = pp.normalize_feed_url(listen_url)
-        parsed_feed = pp.parse(normalised_feed, urllib.request.urlopen(Request(normalised_feed, data=None, headers={'User-Agent': self.user_agent})))
-
-        # Check what episode the user wants
-        episode_index = 0
-
-        # This block adds functionality for the user to choose an episode
-        while(True):
-            episode_title = parsed_feed['episodes'][episode_index]['title']
-            podcast_title = parsed_feed['title']
-
-            data_dict = {"podcast_title": podcast_title,
-                "episode_title": episode_title}
-
-            if episode_index == 0:
-                response = self.get_response('play.previous',
-                    data=data_dict,
-                    on_fail='please.repeat')
-            else:
-                response = self.get_response('play.next.previous',
-                    data=data_dict,
-                    on_fail='please.repeat')
-
-            # error check
-            if response is None:
-                break
-
-            if "stop" in response:
-                self.speak("Operation cancelled.")
-                return False
-            elif "play" in response:
-                break
-            elif "previous" in response:
-                episode_index += 1
-            elif "next" in response:
-                # ensure index doesnt go below zero
-                if episode_index != 0:
-                    episode_index -= 1
-
-        self.speak("Playing podcast.")
-        wait_while_speaking()
-
-        # try and parse the rss feed, some are incompatible
-        try:
-            episode = (parsed_feed["episodes"][episode_index]["enclosures"][0]["url"])
-        except:
-            self.speak_dialog('badrss')
-
-        # check for any redirects
-        episode = urllib.request.urlopen(Request(episode, data=None, headers={'User-Agent': self.user_agent}))
-        redirected_episode = episode.geturl()
-
-        # convert stream to http for mpg123 compatibility
-        http_episode = re.sub('https', 'http', redirected_episode)
-
-        # if audio service module is available use it
-        if self.audioservice:
-            self.audioservice.play(http_episode, message.data['utterance'])
-        else:  # othervice use normal mp3 playback
-            self.process = play_mp3(http_episode)
-
-        self.enclosure.mouth_text(episode_title)
 
     @intent_file_handler('LatestEpisode.intent')
     def handle_latest_episode_intent(self, message):
@@ -252,11 +170,8 @@ class PodcastSkill(CommonPlaySkill):
 
             # skip if i[0] slot left empty
             elements = [": ".join(i) for i in zip(podcast_names, new_episodes) if i[0]]
-
-            speech_string = "The latest episodes are the following: "
-            speech_string += ", ".join(elements[:-2] + [" and ".join(elements[-2:])])
-
-        self.speak(speech_string)
+            response = {'episodes': ", ".join(elements[:-2] + [" and ".join(elements[-2:])])}
+            self.speak_dialog("latest", data=response)
 
     def stop(self):
         if self.state != 'idle':
