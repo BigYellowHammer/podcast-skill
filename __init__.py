@@ -136,6 +136,28 @@ class PodcastSkill(CommonPlaySkill):
             listen_url = ""
         return listen_url
 
+    @intent_file_handler('LatestEpisodes.intent')
+    def handle_latest_episodes_intent(self, message):
+        self.enclosure.mouth_think()
+
+        podcast_names = [self.settings["nameone"], self.settings["nametwo"], self.settings["namethree"]]
+        podcast_urls = [self.settings["feedone"], self.settings["feedtwo"], self.settings["feedthree"]]
+
+        new_episodes = []
+        for index, url in enumerate(podcast_urls):
+            # skip if url slot left empty
+            if not url:
+                continue
+            parsed_feed = pp.parse(podcast_urls[index],
+                                urllib.request.urlopen(Request(podcast_urls[index], data=None, headers={'User-Agent': self.user_agent})))
+            last_episode = (parsed_feed['episodes'][0]['title'])
+            new_episodes.append(last_episode)
+
+            # skip if i[0] slot left empty
+        elements = [": ".join(i) for i in zip(podcast_names, new_episodes) if i[0]]
+        response = {'episodes': ", ".join(elements[:-2] + [" and ".join(elements[-2:])])}
+        self.speak_dialog("latestEpisodes", data=response)
+
     @intent_file_handler('LatestEpisode.intent')
     def handle_latest_episode_intent(self, message):
         utter = message.data['utterance']
@@ -143,7 +165,8 @@ class PodcastSkill(CommonPlaySkill):
 
         podcast_names = [self.settings["nameone"], self.settings["nametwo"], self.settings["namethree"]]
         podcast_urls = [self.settings["feedone"], self.settings["feedtwo"], self.settings["feedthree"]]
-
+        
+        found = False
         # check if the user specified a podcast to check for a new podcast
         for index, name in enumerate(podcast_names):
             # skip if podcast slot left empty
@@ -153,25 +176,14 @@ class PodcastSkill(CommonPlaySkill):
                 parsed_feed = pp.parse(podcast_urls[index],
                                 urllib.request.urlopen(Request(podcast_urls[index], data=None, headers={'User-Agent': self.user_agent})))
                 last_episode = (parsed_feed['episodes'][0]['title'])
-
-                speech_string = "The latest episode of " + name + " is " + last_episode
+                response = {'podcast': name, 'episode': last_episode}
+                self.speak_dialog("latestEpisode", data=response)
+                found = True
                 break
-        else:
-            # if no podcast names are provided, list all new episodes
-            new_episodes = []
-            for index, url in enumerate(podcast_urls):
-                # skip if url slot left empty
-                if not url:
-                    continue
-                parsed_feed = pp.parse(podcast_urls[index],
-                                urllib.request.urlopen(Request(podcast_urls[index], data=None, headers={'User-Agent': self.user_agent})))
-                last_episode = (parsed_feed['episodes'][0]['title'])
-                new_episodes.append(last_episode)
 
-            # skip if i[0] slot left empty
-            elements = [": ".join(i) for i in zip(podcast_names, new_episodes) if i[0]]
-            response = {'episodes': ", ".join(elements[:-2] + [" and ".join(elements[-2:])])}
-            self.speak_dialog("latest", data=response)
+        if(not found):
+            self.speak_dialog("nopodcastfound")
+
 
     def stop(self):
         if self.state != 'idle':
