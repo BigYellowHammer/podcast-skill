@@ -15,13 +15,11 @@
 import podcastparser as pp
 import urllib
 from urllib.request import Request
-import re
 
 from mycroft.skills.core import intent_file_handler
-from mycroft.audio import wait_while_speaking
 from mycroft.skills.common_play_skill import CommonPlaySkill, CPSMatchLevel
-from mycroft.audio.services.vlc import VlcService
-from mycroft.util.parse import match_one, fuzzy_match
+from mycroft.skills.audioservice import AudioService
+from mycroft.util.parse import fuzzy_match
 
 __author__ = 'jamespoole'
 
@@ -31,26 +29,21 @@ class PodcastSkill(CommonPlaySkill):
         super(PodcastSkill, self).__init__(name="PodcastSkill")
         self.process = None
         self.user_agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11'
-        self.mediaplayer = VlcService(config={'low_volume': 10, 'duck': True})
         self.state = 'idle'
-        self.cps_id = "amzn-music"
 
     def initialize(self):
-        self.mediaplayer.clear_list()
         # Setup handlers for playback control messages
         self.add_event('mycroft.audio.service.next', self.next)
         self.add_event('mycroft.audio.service.prev', self.previous)
         self.add_event('mycroft.audio.service.pause', self.pause)
         self.add_event('mycroft.audio.service.resume', self.resume)
-        self.add_event('mycroft.audio.service.lower_volume', self.lower_volume)
-        self.add_event('mycroft.audio.service.restore_volume',
-                       self.restore_volume)
+        self.audio_service = AudioService(self.bus)
+
+
+### BEGIN PLAYBACK SPECIFIC FUNCTIONS 
 
     def CPS_match_query_phrase(self, phrase):
         self.log.debug("phrase {}".format(phrase))
-        # Not ready to play
-        if not self.mediaplayer:
-            return None
 
         data = None
         best_index = -1
@@ -96,33 +89,22 @@ class PodcastSkill(CommonPlaySkill):
 
     def CPS_start(self, phrase, data):
             self.log.info("CPS_start phrase: {} data: {}".format(phrase, data))
-            tracklist = []
             parsed_feed = pp.parse(data, urllib.request.urlopen(Request(data,
                             data=None, headers={'User-Agent': self.user_agent}))
                           )
-            episode_title = (parsed_feed['episodes'][0]['title'])
 
             # try and parse the rss feed, some are incompatible
             try:
-                episode = (parsed_feed["episodes"][0]["enclosures"][0]["url"])
+                episodes = parsed_feed["episodes"]
+                urls = [o["enclosures"][0]["url"] for o in episodes]
+                titles = [o["title"] for o in episodes]
             except:
                 self.speak_dialog('badrss')
 
-            # check for any redirects
-            episode = urllib.request.urlopen(Request(episode, data=None, headers={'User-Agent': self.user_agent}))
-            redirected_episode = episode.geturl()
-
-            http_episode = re.sub('https', 'http', redirected_episode)
-            self.log.info("http_episode: {}".format(http_episode))
-            tracklist.append(http_episode)
-
-            if self.state in ['playing', 'paused']:
-                self.mediaplayer.stop()
-                self.mediaplayer.clear_list()
-            self.mediaplayer.add_list(tracklist)
-            self.speak(parsed_feed["episodes"][0]["title"])
-            self.mediaplayer.play()
-            self.state = 'playing'
+            self.titles = titles
+            self.current_index = 0
+            self.speak(titles[0], wait=True)
+            self.audio_service.play(urls)
 
     def chosen_podcast(self, utter, podcast_names, podcast_urls):
         for index, name in enumerate(podcast_names):
@@ -135,6 +117,41 @@ class PodcastSkill(CommonPlaySkill):
         else:
             listen_url = ""
         return listen_url
+
+    def pause(self):
+        self.log.info("Pause called")
+        self.log.info('Audio service status: ''{}'.format(self.audio_service.track_info()))
+
+
+    def resume(self):
+        self.log.info("Resume called")
+        self.log.info('Audio service status: ''{}'.format(self.audio_service.track_info()))
+
+
+
+    def next(self):
+        self.log.info("Next called")
+        self.log.info('Audio service status: ''{}'.format(self.audio_service.track_info()))
+        if self.audio_service.is_playing:
+            if(self.current_index == 0):
+                self.speak("You are listening to the latest episode", wait=True)
+                return False
+            else:
+                self.current_index = self.current_index - 1
+                self.speak(self.titles[self.current_index], wait=True)
+
+    def previous(self):
+        self.log.info("Prev called")
+        self.log.info('Audio service status: ''{}'.format(self.audio_service.track_info()))
+        if self.audio_service.is_playing:
+            if(self.current_index == len(self.titles)-1):
+                self.speak("No more episodes avaliable", wait=True)
+            else:
+                self.current_index = self.current_index + 1
+                self.speak(self.titles[self.current_index], wait=True)
+
+### END PLAYBACK SPECIFIC FUNCTIONS 
+
 
     @intent_file_handler('LatestEpisodes.intent')
     def handle_latest_episodes_intent(self, message):
@@ -186,55 +203,16 @@ class PodcastSkill(CommonPlaySkill):
 
 
     def stop(self):
-        if self.state != 'idle':
-            self.mediaplayer.stop()
+        if self.audio_service.is_playing:
+            self.audio_service.stop()
             self.state = 'idle'
             return True
         else:
             return False
 
-    def pause(self):
-        if self.state == 'playing':
-            self.mediaplayer.pause()
-            self.state = 'paused'
-            return True
-        return False
-
-    def resume(self):
-        if self.state == 'paused':
-            self.mediaplayer.resume()
-            self.state = 'playing'
-            return True
-        return False
-
-    def next(self):
-        if self.state == 'playing':
-            self.mediaplayer.next()
-            return True
-        return False
-
-    def previous(self):
-        if self.state == 'playing':
-            self.mediaplayer.previous()
-            return True
-        return False
-
-    def lower_volume(self):
-        if self.state == 'playing':
-            self.mediaplayer.lower_volume()
-            return True
-        return False
-
-    def restore_volume(self):
-        if self.state == 'playing':
-            self.mediaplayer.restore_volume()
-            return True
-        return False
-
     def shutdown(self):
         if self.state != 'idle':
-            self.mediaplayer.stop()
-            self.mediaplayer.clear_list()
+            self.audio_service.stop()
 
 
 def create_skill():
